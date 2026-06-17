@@ -219,11 +219,32 @@ export function normalsFromDepth(
 }
 
 /**
+ * Detail-enhanced height field for normal derivation. Monocular depth is globally
+ * normalized, so within-object structure (a nose, a fold) is a tiny fraction of
+ * the 0..1 range and yields almost-flat normals. An unsharp-mask boost of the
+ * mid-frequency depth amplifies that real structure so the relight actually
+ * sculpts the surface, while the (separate) true depth is kept for shadows.
+ */
+export function detailEnhanceHeight(
+  depth: Float32Array,
+  width: number,
+  height: number,
+  gain = 1.2,
+): Float32Array {
+  const radius = Math.max(2, Math.round(Math.max(width, height) / 48))
+  const lf = boxBlur(depth, width, height, radius)
+  const out = new Float32Array(depth.length)
+  for (let i = 0; i < depth.length; i++) out[i] = depth[i]! + gain * (depth[i]! - lf[i]!)
+  return out
+}
+
+/**
  * Estimate normals + depth from RGBA pixels.
  *
  * Runs the depth model, normalizes to a 0..1 height-field, resizes back to the
- * source resolution, lightly smooths it (to suppress 8-bit banding), and derives
- * unit normals from the gradient. Returns float buffers plus the PNG-ready pack.
+ * source resolution, lightly smooths it (to suppress 8-bit banding), boosts its
+ * mid-frequency detail, and derives clamped unit normals. Returns float buffers
+ * plus the PNG-ready pack (depth stays the true, un-boosted field).
  */
 export async function estimateGBuffer(
   rgba: Uint8ClampedArray,
@@ -248,12 +269,13 @@ export async function estimateGBuffer(
   const depthSmall = normalizeDepth(predicted.data as Float32Array)
   const depthFull = resizeFloat(depthSmall, pw, ph, width, height)
   // Blur radius scales with size: low-bit depth bands more once upscaled, and
-  // smoother depth means cleaner normals (the edge-aware step keeps silhouettes).
+  // smoother depth means cleaner normals (the edge clamp keeps silhouettes).
   const blurRadius = Math.max(1, Math.round(Math.max(width, height) / 640))
   const depthSmooth = boxBlur(depthFull, width, height, blurRadius)
-  const normals = normalsFromDepth(depthSmooth, width, height, normalStrength)
+  const height3d = detailEnhanceHeight(depthSmooth, width, height)
+  const normals = normalsFromDepth(height3d, width, height, normalStrength)
   onInference?.(100)
 
-  const packed = packGBuffer(normals, depthFull, width, height)
-  return { packed, normals, depth: depthFull, width, height }
+  const packed = packGBuffer(normals, depthSmooth, width, height)
+  return { packed, normals, depth: depthSmooth, width, height }
 }
