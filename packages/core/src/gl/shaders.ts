@@ -1,9 +1,13 @@
 /**
- * GLSL for the relight pass. Inputs are three textures — albedo (de-lit base),
- * normals, depth — plus light uniforms. Output is the relit, shaded image.
+ * GLSL for the relight pass. Inputs are three textures — the source photo (base),
+ * normals, depth — plus light uniforms. Output is the relit image.
  *
- * The fragment shader does ambient + Lambert key + rim, then ray-marches the
- * depth buffer toward the light for a cheap screen-space contact shadow.
+ * Rather than recover an albedo and re-shade (which flattens the photo into a
+ * washed-out, sketchy image), we *modulate* the original photographically: a
+ * half-Lambert key brightens toward the light and gently darkens away from it
+ * (floored by ambient), so all of the photo's colour, texture and contrast are
+ * preserved while a movable directional light is sculpted on top. A cheap
+ * screen-space contact shadow and a soft specular sheen round it out.
  */
 
 export const VERT = /* glsl */ `#version 300 es
@@ -20,7 +24,7 @@ precision highp float;
 in vec2 v_uv;
 out vec4 fragColor;
 
-uniform sampler2D u_albedo;   // de-lit base color (sRGB)
+uniform sampler2D u_albedo;   // source photo / base color (sRGB)
 uniform sampler2D u_normal;   // xyz packed 0..1
 uniform sampler2D u_depth;    // depth in .r, 0..1 (near = 1)
 
@@ -55,25 +59,30 @@ float contactShadow(vec2 uv, float z, vec3 L) {
 }
 
 void main() {
-  vec3 albedo = srgbToLinear(texture(u_albedo, v_uv).rgb);
+  vec3 base = srgbToLinear(texture(u_albedo, v_uv).rgb);
   vec3 n = normalize(texture(u_normal, v_uv).xyz * 2.0 - 1.0);
   float z = texture(u_depth, v_uv).r;
 
   vec3 L = normalize(u_lightDir);
-  float ndl = max(dot(n, L), 0.0);
+  // Half-Lambert wrap (0..1): soft, photographic, never a hard terminator.
+  float wrap = dot(n, L) * 0.5 + 0.5;
   float shadow = contactShadow(v_uv, z, L);
 
-  // Blinn-Phong-ish specular toward the viewer (V = +z).
+  // Modulate the photo around neutral: ambient sets how far the away-from-light
+  // side may darken; the lit side brightens. The base image is never removed, so
+  // colour, texture and contrast survive — we only redistribute light.
+  float darkFloor = mix(1.0 - 0.55 * u_intensity, 1.0, clamp(u_ambient, 0.0, 1.0));
+  float factor = mix(darkFloor, 1.0 + 0.5 * u_intensity, wrap) * shadow;
+  vec3 lit = base * factor;
+
+  // Tint only the lit side toward the light colour (shadows stay neutral).
+  vec3 tint = mix(vec3(1.0), u_lightColor, clamp((wrap - 0.5) * 2.0 * u_intensity, 0.0, 1.0));
+  lit *= tint;
+
+  // Soft specular sheen where the surface faces the light.
   vec3 H = normalize(L + vec3(0.0, 0.0, 1.0));
-  float spec = pow(max(dot(n, H), 0.0), 32.0) * u_specular;
+  float spec = pow(max(dot(n, H), 0.0), 48.0) * u_specular * max(wrap - 0.5, 0.0) * 2.0;
+  lit += spec * u_lightColor * shadow;
 
-  // Subtle rim for separation. Kept small and tied to the key light's direction
-  // so it reads as light wrapping a curved surface, not a uniform white outline.
-  float rim = pow(1.0 - max(n.z, 0.0), 3.0) * 0.1 * max(ndl, u_ambient);
-
-  vec3 lit = albedo * (u_ambient + ndl * u_intensity * shadow) * u_lightColor
-           + spec * u_lightColor * shadow
-           + rim * u_lightColor;
-
-  fragColor = vec4(linearToSrgb(lit), 1.0);
+  fragColor = vec4(linearToSrgb(clamp(lit, 0.0, 1.0)), 1.0);
 }`

@@ -1,5 +1,28 @@
 import { describe, it, expect } from 'vitest'
-import { normalsFromDepth } from '../src/gbuffer'
+import { normalsFromDepth, detailEnhanceHeight } from '../src/gbuffer'
+
+describe('detailEnhanceHeight', () => {
+  it('amplifies mid-frequency structure (unsharp boost)', () => {
+    const w = 96
+    const h = 96
+    const depth = new Float32Array(w * h).fill(0.5)
+    // A soft raised region in the middle.
+    for (let y = 36; y < 60; y++) for (let x = 36; x < 60; x++) depth[y * w + x] = 0.62
+    const out = detailEnhanceHeight(depth, w, h, 1.2)
+    let mn = Infinity
+    let mx = -Infinity
+    for (let i = 0; i < out.length; i++) {
+      mn = Math.min(mn, out[i]!)
+      mx = Math.max(mx, out[i]!)
+    }
+    // Unsharp overshoots beyond the original [0.5, 0.62] range at the structure's
+    // edges → more pronounced relief for the relight to shade.
+    expect(mx).toBeGreaterThan(0.62)
+    expect(mn).toBeLessThan(0.5)
+    // Flat far-field is essentially unchanged.
+    expect(out[5 * w + 5]!).toBeCloseTo(0.5, 2)
+  })
+})
 
 describe('normalsFromDepth', () => {
   it('tilts the normal on a smooth depth ramp', () => {

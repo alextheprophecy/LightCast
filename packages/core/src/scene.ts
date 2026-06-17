@@ -13,6 +13,7 @@ import {
   estimateGBuffer,
   unpackGBuffer,
   normalsFromDepth,
+  detailEnhanceHeight,
   packGBuffer,
   DEFAULT_MODEL,
 } from './gbuffer'
@@ -50,7 +51,9 @@ const DEFAULTS = {
   model: DEFAULT_MODEL,
   device: 'auto' as const,
   quality: 'medium' as const,
-  delight: 'grade' as const,
+  // Preserve the photo by default and modulate light onto it; `grade` (retinex
+  // de-light) is opt-in for users who want a flatter albedo to fully re-shade.
+  delight: 'none' as const,
   ambient: 0.25,
   specular: 0.3,
   shadows: true,
@@ -159,7 +162,8 @@ export async function createLightcast(
     setRelief(strength) {
       relief = strength
       // Re-derive normals from the cached depth — no model re-run.
-      const normals = normalsFromDepth(gbuffer.depth, gbuffer.width, gbuffer.height, relief)
+      const height3d = detailEnhanceHeight(gbuffer.depth, gbuffer.width, gbuffer.height)
+      const normals = normalsFromDepth(height3d, gbuffer.width, gbuffer.height, relief)
       const packed = packGBuffer(normals, gbuffer.depth, gbuffer.width, gbuffer.height)
       gbuffer = {
         packed,
