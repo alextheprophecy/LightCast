@@ -117,7 +117,9 @@ export function delightGrade(
   const albedo = new Float32Array(n * 3)
   for (let i = 0; i < n; i++) {
     // Blend between original (strength 0) and fully flattened (strength 1).
-    const gain = 1 - strength + strength * (mean / shading[i]!)
+    // Clamp the gain: across a high-contrast edge the blurred shading lags the
+    // real luminance, and an unclamped ratio paints a bright/dark retinex halo.
+    const gain = Math.min(1.6, Math.max(0.6, 1 - strength + strength * (mean / shading[i]!)))
     albedo[i * 3] = lin[i * 3]! * gain
     albedo[i * 3 + 1] = lin[i * 3 + 1]! * gain
     albedo[i * 3 + 2] = lin[i * 3 + 2]! * gain

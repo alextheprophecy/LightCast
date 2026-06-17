@@ -77,6 +77,8 @@ export interface LightcastOptions {
   damping?: number
   /** Downscale longest edge to this many px before inference. Default 1024. */
   maxResolution?: number
+  /** Bumpiness of the derived surface normals. Higher = more relief. Default 1. */
+  normalStrength?: number
   /** Honor `prefers-reduced-motion`. Default true. */
   respectReducedMotion?: boolean
   onProgress?: (stage: ProgressStage, pct: number) => void
@@ -101,6 +103,8 @@ export interface LightScene {
   /** Set the key light; partial updates merge. Degrees or -1..1 for azimuth/elevation. */
   setLight(light: Light): void
   update(options: Partial<LightcastOptions>): void
+  /** Re-derive surface normals from the cached depth at a new relief strength (no re-inference). */
+  setRelief(strength: number): void
   play(animation?: LightPreset): void
   pause(): void
   exportVideo(opts?: ExportOptions): Promise<Blob>

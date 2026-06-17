@@ -30,6 +30,8 @@ const elevation = $<HTMLInputElement>('elevation')
 const intensity = $<HTMLInputElement>('intensity')
 const ambient = $<HTMLInputElement>('ambient')
 const specular = $<HTMLInputElement>('specular')
+const relief = $<HTMLInputElement>('relief')
+const shadows = $<HTMLInputElement>('shadows')
 const color = $<HTMLInputElement>('color')
 const preset = $<HTMLSelectElement>('preset')
 const resetBtn = $<HTMLButtonElement>('reset')
@@ -86,9 +88,12 @@ async function load(src: string | File) {
     light: currentLight(),
     ambient: Number(ambient.value),
     specular: Number(specular.value),
-    // Single-threaded WASM + q8 model keeps inference viable on static hosting.
+    shadows: shadows.checked,
+    normalStrength: Number(relief.value),
+    // Single-threaded WASM on static hosting. fp16 (medium) gives smoother depth
+    // than q8 on desktop, which means cleaner normals; mobile stays light.
     device: isMobile ? 'wasm' : 'auto',
-    quality: 'low',
+    quality: isMobile ? 'low' : 'medium',
     maxResolution: isMobile ? 640 : 1024,
     onProgress: setProgress,
   }
@@ -119,6 +124,10 @@ viewport.addEventListener('pointermove', (e) => {
 // --- controls ---
 for (const el of [elevation, intensity, color]) el.addEventListener('input', applyLight)
 for (const el of [ambient, specular]) el.addEventListener('input', applyOptions)
+shadows.addEventListener('change', () => scene?.update({ shadows: shadows.checked }))
+// Relief re-derives normals from the cached depth (no model re-run) — cheap enough
+// to drive live from the slider.
+relief.addEventListener('input', () => scene?.setRelief(Number(relief.value)))
 preset.addEventListener('change', () => {
   if (!scene) return
   if (preset.value) scene.play(preset.value as LightPreset)
@@ -133,9 +142,13 @@ resetBtn.addEventListener('click', () => {
   intensity.value = '1.1'
   ambient.value = '0.25'
   specular.value = '0.3'
+  relief.value = '1'
+  shadows.checked = true
   color.value = '#fff3e0'
   preset.value = ''
   scene?.pause()
+  scene?.setRelief(1)
+  scene?.update({ shadows: true })
   applyLight()
   applyOptions()
 })
