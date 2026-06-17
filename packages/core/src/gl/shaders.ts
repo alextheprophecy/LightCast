@@ -35,21 +35,23 @@ uniform vec2  u_texel;        // 1.0 / resolution
 vec3 srgbToLinear(vec3 c){ return pow(c, vec3(2.2)); }
 vec3 linearToSrgb(vec3 c){ return pow(c, vec3(1.0/2.2)); }
 
-// March from the fragment toward the light; if depth rises above the ray, occlude.
+// March from the fragment toward the light; if a *local* occluder rises above the
+// ray, occlude. A depth cliff (silhouette) is a separate object, not a caster, so
+// ignore jumps outside a thickness window — otherwise edges get hard dark halos.
 float contactShadow(vec2 uv, float z, vec3 L) {
   if (u_shadows < 0.5) return 1.0;
-  vec2 dir = normalize(L.xy) * u_texel * 2.0;
+  vec2 dir = normalize(L.xy + 1e-5) * u_texel * 2.0;
   float occ = 0.0;
-  float stepZ = L.z * 0.02;
+  float stepZ = L.z * 0.015;
   vec2 p = uv;
   float rz = z;
   for (int i = 0; i < 16; i++) {
     p += dir;
     rz += stepZ;
-    float scene = texture(u_depth, p).r;
-    if (scene > rz + 0.01) { occ += 1.0; }
+    float diff = texture(u_depth, p).r - rz;
+    if (diff > 0.01 && diff < 0.08) { occ += 1.0; }
   }
-  return clamp(1.0 - occ / 16.0 * 0.8, 0.2, 1.0);
+  return clamp(1.0 - occ / 16.0 * 0.6, 0.4, 1.0);
 }
 
 void main() {
@@ -65,8 +67,9 @@ void main() {
   vec3 H = normalize(L + vec3(0.0, 0.0, 1.0));
   float spec = pow(max(dot(n, H), 0.0), 32.0) * u_specular;
 
-  // Rim light for separation from background.
-  float rim = pow(1.0 - max(n.z, 0.0), 3.0) * 0.3;
+  // Subtle rim for separation. Kept small and tied to the key light's direction
+  // so it reads as light wrapping a curved surface, not a uniform white outline.
+  float rim = pow(1.0 - max(n.z, 0.0), 3.0) * 0.1 * max(ndl, u_ambient);
 
   vec3 lit = albedo * (u_ambient + ndl * u_intensity * shadow) * u_lightColor
            + spec * u_lightColor * shadow

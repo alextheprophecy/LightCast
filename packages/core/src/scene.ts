@@ -9,7 +9,13 @@
  * and `RelightRenderer`, which the first implementation PR fills in.
  */
 import { loadImage } from './loader'
-import { estimateGBuffer, unpackGBuffer, DEFAULT_MODEL } from './gbuffer'
+import {
+  estimateGBuffer,
+  unpackGBuffer,
+  normalsFromDepth,
+  packGBuffer,
+  DEFAULT_MODEL,
+} from './gbuffer'
 import { delightGrade, albedoToRgba } from './delight'
 import { RelightRenderer } from './gl/renderer'
 import { hexToRgb, kelvinToRgb, lightDirection } from './color'
@@ -77,12 +83,14 @@ export async function createLightcast(
   const loaded = await loadImage(input, opts.maxResolution)
   opts.onProgress?.('gbuffer', 0)
 
-  const gbuffer = options.gbuffer
+  let relief = options.normalStrength ?? 1
+  let gbuffer = options.gbuffer
     ? unpackGBuffer(await decodeGBuffer(options.gbuffer))
     : await estimateGBuffer(loaded.imageData.data, loaded.width, loaded.height, {
         model: opts.model,
         device: opts.device,
         quality: opts.quality,
+        normalStrength: relief,
         onModelProgress: (p) => opts.onProgress?.('model', p),
         onInference: (p) => opts.onProgress?.('inference', p),
       })
@@ -132,7 +140,9 @@ export async function createLightcast(
 
   const scene: LightScene = {
     canvas: renderer.canvas,
-    gbuffer,
+    get gbuffer() {
+      return gbuffer
+    },
     mount(container) {
       container.appendChild(renderer.canvas)
       return this
@@ -144,6 +154,21 @@ export async function createLightcast(
     update(next) {
       Object.assign(opts, next)
       if (next.light) Object.assign(light, next.light)
+      draw()
+    },
+    setRelief(strength) {
+      relief = strength
+      // Re-derive normals from the cached depth — no model re-run.
+      const normals = normalsFromDepth(gbuffer.depth, gbuffer.width, gbuffer.height, relief)
+      const packed = packGBuffer(normals, gbuffer.depth, gbuffer.width, gbuffer.height)
+      gbuffer = {
+        packed,
+        normals,
+        depth: gbuffer.depth,
+        width: gbuffer.width,
+        height: gbuffer.height,
+      }
+      renderer.upload(albedo, gbuffer)
       draw()
     },
     play(animation = 'studio') {

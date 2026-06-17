@@ -161,8 +161,16 @@ function resizeFloat(
   return out
 }
 
-/** Derive unit surface normals from a depth height-field. Output length n*3, -1..1. */
-function normalsFromDepth(
+/**
+ * Derive unit surface normals from a depth height-field. Output length n*3, -1..1.
+ *
+ * Object silhouettes are depth *cliffs*, not steep surfaces: differentiating
+ * across them would tilt the normal almost sideways and paint a bright/dark halo
+ * along every edge. We suppress the gradient where the local depth jump is large
+ * (an edge-aware/bilateral weight), so silhouettes stay facing the camera and
+ * only genuine surface relief shades.
+ */
+export function normalsFromDepth(
   depth: Float32Array,
   width: number,
   height: number,
@@ -172,6 +180,10 @@ function normalsFromDepth(
   const out = new Float32Array(n * 3)
   // Scale gradients into image space so bumpiness is resolution-independent.
   const k = 0.02 * strength * Math.max(width, height)
+  // Only genuine silhouette cliffs (large depth jumps) are suppressed; ordinary
+  // surface relief (folds, contours) is preserved so the relight still has shape.
+  const sigma = 0.07
+  const inv2s2 = 1 / (2 * sigma * sigma)
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = y * width + x
@@ -179,8 +191,13 @@ function normalsFromDepth(
       const r = depth[x < width - 1 ? i + 1 : i]!
       const t = depth[y > 0 ? i - width : i]!
       const b = depth[y < height - 1 ? i + width : i]!
-      const gx = (r - l) * 0.5 * k
-      const gy = (b - t) * 0.5 * k
+      const jx = r - l
+      const jy = b - t
+      // Edge-aware weights: ~1 on smooth surfaces, ~0 across a depth cliff.
+      const wx = Math.exp(-(jx * jx) * inv2s2)
+      const wy = Math.exp(-(jy * jy) * inv2s2)
+      const gx = jx * 0.5 * k * wx
+      const gy = jy * 0.5 * k * wy
       // Height rises toward the camera (near = 1), so the normal tilts away from
       // increasing depth. +y points up in view space (the renderer flips image y
       // on upload, so we keep gy's sign to match screen-up here).
@@ -228,8 +245,10 @@ export async function estimateGBuffer(
 
   const depthSmall = normalizeDepth(predicted.data as Float32Array)
   const depthFull = resizeFloat(depthSmall, pw, ph, width, height)
-  // A light blur tames gradient noise before differentiation.
-  const depthSmooth = boxBlur(depthFull, width, height, 1)
+  // Blur radius scales with size: low-bit depth bands more once upscaled, and
+  // smoother depth means cleaner normals (the edge-aware step keeps silhouettes).
+  const blurRadius = Math.max(1, Math.round(Math.max(width, height) / 640))
+  const depthSmooth = boxBlur(depthFull, width, height, blurRadius)
   const normals = normalsFromDepth(depthSmooth, width, height, normalStrength)
   onInference?.(100)
 
