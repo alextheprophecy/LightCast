@@ -15,39 +15,40 @@ describe('normalsFromDepth', () => {
     expect(n[i + 2]!).toBeGreaterThan(0.5)
   })
 
-  it('keeps the normal facing forward across a depth cliff (no edge halo)', () => {
-    const w = 32
+  it('clamps a hard cliff to a bounded soft edge (no blowout, no dead band)', () => {
+    const w = 128
     const h = 8
     const depth = new Float32Array(w * h)
-    // Flat foreground (1.0) and background (0.0) split by a hard cliff at x=16.
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) depth[y * w + x] = x < 16 ? 1 : 0
+    // Flat foreground (1.0) and background (0.0) split by a hard cliff at x=64.
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) depth[y * w + x] = x < 64 ? 1 : 0
     const n = normalsFromDepth(depth, w, h, 1)
-    // Right at the cliff the edge-aware weight suppresses the gradient, so the
-    // normal stays ~forward instead of tilting sideways into a bright/dark rim.
-    const i = (4 * w + 16) * 3
-    expect(n[i + 2]!).toBeGreaterThan(0.9)
-    expect(Math.abs(n[i]!)).toBeLessThan(0.3)
+    const i = (4 * w + 64) * 3
+    // The tilt is *bounded* (clamp) so the normal never blows out near-sideways…
+    expect(n[i + 2]!).toBeGreaterThan(0.75)
+    // …but it still tilts, so shading reaches the contour (no flat dead band).
+    expect(Math.abs(n[i]!)).toBeGreaterThan(0.3)
+    expect(Math.abs(n[i]!)).toBeLessThan(0.7)
   })
 
-  it('stays forward across a softened cliff (no residual rim band)', () => {
-    // A real silhouette is smeared by depth resize/blur into a short ramp. The
-    // dilated edge suppression should keep the whole band camera-facing, not just
-    // its steepest pixel — otherwise the shoulders rim.
-    const w = 48
+  it('keeps the edge shaded but bounded across a softened cliff', () => {
+    // Depth resize/blur smears a cliff into a short ramp. Across it, normals must
+    // stay bounded (no rim blowout) yet still tilt (no dead, unshaded band).
+    const w = 128
     const h = 8
     const depth = new Float32Array(w * h)
     for (let y = 0; y < h; y++)
       for (let x = 0; x < w; x++) {
-        // foreground 1 → background 0 over a 6px ramp centred at x=24
-        const tt = Math.min(1, Math.max(0, (x - 21) / 6))
+        const tt = Math.min(1, Math.max(0, (x - 62) / 4)) // 4px ramp centred ~x=64
         depth[y * w + x] = 1 - tt
       }
     const n = normalsFromDepth(depth, w, h, 1)
-    // Every pixel across the transition band should remain ~forward.
-    for (let x = 19; x <= 29; x++) {
+    let maxTilt = 0
+    for (let x = 60; x <= 68; x++) {
       const nz = n[(4 * w + x) * 3 + 2]!
-      expect(nz).toBeGreaterThan(0.8)
+      expect(nz).toBeGreaterThan(0.7) // never blown out
+      maxTilt = Math.max(maxTilt, Math.abs(n[(4 * w + x) * 3]!))
     }
+    expect(maxTilt).toBeGreaterThan(0.2) // the edge is genuinely shaded, not dead-flat
   })
 
   it('produces unit-length normals', () => {
