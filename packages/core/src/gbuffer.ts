@@ -161,14 +161,44 @@ function resizeFloat(
   return out
 }
 
+/** Separable max-filter (grayscale dilation) of a float field, radius `r`. */
+function dilateMaxFloat(src: Float32Array, width: number, height: number, r: number): Float32Array {
+  if (r < 1) return src.slice()
+  const tmp = new Float32Array(src.length)
+  for (let y = 0; y < height; y++) {
+    const row = y * width
+    for (let x = 0; x < width; x++) {
+      let m = 0
+      for (let k = -r; k <= r; k++) {
+        const xx = x + k
+        if (xx >= 0 && xx < width) m = Math.max(m, src[row + xx]!)
+      }
+      tmp[row + x] = m
+    }
+  }
+  const out = new Float32Array(src.length)
+  for (let x = 0; x < width; x++) {
+    for (let y = 0; y < height; y++) {
+      let m = 0
+      for (let k = -r; k <= r; k++) {
+        const yy = y + k
+        if (yy >= 0 && yy < height) m = Math.max(m, tmp[yy * width + x]!)
+      }
+      out[y * width + x] = m
+    }
+  }
+  return out
+}
+
 /**
  * Derive unit surface normals from a depth height-field. Output length n*3, -1..1.
  *
  * Object silhouettes are depth *cliffs*, not steep surfaces: differentiating
- * across them would tilt the normal almost sideways and paint a bright/dark halo
- * along every edge. We suppress the gradient where the local depth jump is large
- * (an edge-aware/bilateral weight), so silhouettes stay facing the camera and
- * only genuine surface relief shades.
+ * across them would tilt the normal sideways and paint a halo along every edge.
+ * We build a per-pixel edge map (local depth jump) and **dilate** it, then use it
+ * as a bilateral weight — so the whole silhouette transition band (a cliff is
+ * smeared into a short ramp by depth resize/blur, and the ramp's shoulders would
+ * otherwise survive) is held camera-facing, while genuine surface relief shades.
  */
 export function normalsFromDepth(
   depth: Float32Array,
@@ -180,10 +210,13 @@ export function normalsFromDepth(
   const out = new Float32Array(n * 3)
   // Scale gradients into image space so bumpiness is resolution-independent.
   const k = 0.02 * strength * Math.max(width, height)
-  // Only genuine silhouette cliffs (large depth jumps) are suppressed; ordinary
-  // surface relief (folds, contours) is preserved so the relight still has shape.
+  // Depth jumps beyond ~sigma (normalized 0..1) read as silhouettes, not relief.
   const sigma = 0.07
   const inv2s2 = 1 / (2 * sigma * sigma)
+
+  // Edge map = local depth-jump magnitude, dilated to cover the soft transition
+  // band around each silhouette (not just its single steepest pixel).
+  const edge = new Float32Array(n)
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = y * width + x
@@ -191,13 +224,23 @@ export function normalsFromDepth(
       const r = depth[x < width - 1 ? i + 1 : i]!
       const t = depth[y > 0 ? i - width : i]!
       const b = depth[y < height - 1 ? i + width : i]!
-      const jx = r - l
-      const jy = b - t
-      // Edge-aware weights: ~1 on smooth surfaces, ~0 across a depth cliff.
-      const wx = Math.exp(-(jx * jx) * inv2s2)
-      const wy = Math.exp(-(jy * jy) * inv2s2)
-      const gx = jx * 0.5 * k * wx
-      const gy = jy * 0.5 * k * wy
+      edge[i] = Math.max(Math.abs(r - l), Math.abs(b - t))
+    }
+  }
+  const edgeRadius = Math.max(2, Math.round(Math.max(width, height) / 320))
+  const edgeD = dilateMaxFloat(edge, width, height, edgeRadius)
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x
+      const l = depth[x > 0 ? i - 1 : i]!
+      const r = depth[x < width - 1 ? i + 1 : i]!
+      const t = depth[y > 0 ? i - width : i]!
+      const b = depth[y < height - 1 ? i + width : i]!
+      // One edge-aware weight from the dilated edge map suppresses the whole band.
+      const w = Math.exp(-(edgeD[i]! * edgeD[i]!) * inv2s2)
+      const gx = (r - l) * 0.5 * k * w
+      const gy = (b - t) * 0.5 * k * w
       // Height rises toward the camera (near = 1), so the normal tilts away from
       // increasing depth. +y points up in view space (the renderer flips image y
       // on upload, so we keep gy's sign to match screen-up here).
