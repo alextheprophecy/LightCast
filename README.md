@@ -8,6 +8,8 @@ Automatic surface normals + depth. Drag the light. No server. No 3D model. One i
 [![npm](https://img.shields.io/badge/npm-lightcast-ffd76e)](https://www.npmjs.com/package/lightcast)
 [![license](https://img.shields.io/badge/license-MIT-ffd76e)](./LICENSE)
 
+**[▶ Live demo](https://alextheprophecy.github.io/LightCast/)** — runs entirely on your device (works on mobile).
+
 ```bash
 npm i lightcast
 ```
@@ -24,7 +26,7 @@ Relighting a photo is everywhere in product shots, portraits and ads — but eve
 - **Photoshop dodge-and-burn** is gorgeous but it's **manual artist work** — the universal blocker.
 - **Blender relighting** needs an actual **3D mesh** — you have a JPEG, not geometry.
 
-`lightcast` closes the gap: **image → automatic normals + depth → interactive relighting**, 100% client-side, in a package you `import`. Geometry is estimated in-browser via [Metric3D v2](https://github.com/YvanYin/Metric3D) (depth **and** normals in one pass) on WebGPU; relighting is a hand-written WebGL2 shader with **zero peer dependencies** (no three.js).
+`lightcast` closes the gap: **image → automatic normals + depth → interactive relighting**, 100% client-side, in a package you `import`. Geometry is estimated in-browser via [Depth Anything V2](https://github.com/DepthAnything/Depth-Anything-V2) (run through [transformers.js](https://github.com/huggingface/transformers.js) on WebGPU→WASM), with surface normals derived analytically from the depth gradient — small and mobile-friendly, and swappable for a true normals model like [Metric3D v2](https://github.com/YvanYin/Metric3D). Relighting is a hand-written WebGL2 shader with **zero peer dependencies** (no three.js).
 
 It's the sibling of [**depthcast**](https://github.com/alextheprophecy/depthcast): same idea — estimate a dense per-pixel buffer from one image, then drive a real-time WebGL effect — applied to **light** instead of **parallax**.
 

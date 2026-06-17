@@ -1,16 +1,25 @@
 /**
  * Geometry-buffer estimation: a single image → surface normals + depth.
  *
- * Runs Metric3D v2 (community ONNX export) on `onnxruntime-web`, WebGPU→WASM.
- * Metric3D conveniently emits BOTH metric depth and surface normals in one
- * feed-forward pass, so a single session fills the whole G-buffer.
+ * We run a depth-estimation model (Depth Anything V2) via transformers.js
+ * (WebGPU→WASM), then derive surface normals analytically from the depth
+ * gradient. This keeps the model small and mobile-friendly — no separate
+ * normals network — while still giving the relight renderer a full G-buffer.
  *
- * NOTE: model I/O is isolated here behind `estimateGBuffer` so the renderer and
- * scene never touch onnxruntime directly, and so the model can be swapped.
+ * Model I/O is isolated here behind `estimateGBuffer` so the renderer and scene
+ * never touch the inference runtime directly, and so the model can be swapped
+ * (e.g. for a true normals model like Metric3D) without touching the renderer.
  */
+import {
+  pipeline,
+  RawImage,
+  type DepthEstimationPipeline,
+  type ProgressCallback,
+} from '@huggingface/transformers'
+import { boxBlur } from './delight'
 import type { Device, GBuffer, Quality } from './types'
 
-export const DEFAULT_MODEL = 'onnx-community/metric3d-vit-small'
+export const DEFAULT_MODEL = 'onnx-community/depth-anything-v2-small'
 
 const DTYPE_BY_QUALITY: Record<Quality, 'q8' | 'fp16' | 'fp32'> = {
   low: 'q8',
@@ -22,6 +31,8 @@ export interface GBufferOptions {
   model?: string
   device?: Device
   quality?: Quality
+  /** Bumpiness of the derived normals. Higher = more pronounced relief. Default 1. */
+  normalStrength?: number
   onModelProgress?: (pct: number) => void
   onInference?: (pct: number) => void
 }
@@ -59,22 +70,169 @@ export function unpackGBuffer(packed: ImageData): GBuffer {
   return { packed, normals, depth, width, height }
 }
 
+const pipelineCache = new Map<string, Promise<DepthEstimationPipeline>>()
+
+/** Lazily create (and cache) a depth-estimation pipeline, webgpu→wasm fallback. */
+async function getDepthPipeline(options: GBufferOptions): Promise<DepthEstimationPipeline> {
+  const { model = DEFAULT_MODEL, device = 'auto', quality = 'medium', onModelProgress } = options
+  const dtype = DTYPE_BY_QUALITY[quality]
+
+  const progress_callback: ProgressCallback | undefined = onModelProgress
+    ? (e: { status?: string; progress?: number }) => {
+        if (e?.status === 'progress' && typeof e.progress === 'number') onModelProgress(e.progress)
+        if (e?.status === 'ready' || e?.status === 'done') onModelProgress(100)
+      }
+    : undefined
+
+  const order: Device[] = device === 'auto' ? ['webgpu', 'wasm'] : [device]
+
+  let lastError: unknown
+  for (const dev of order) {
+    const key = `${model}::${dev}::${dtype}`
+    let pending = pipelineCache.get(key)
+    if (!pending) {
+      pending = pipeline('depth-estimation', model, {
+        device: dev === 'wasm' ? undefined : dev,
+        dtype,
+        progress_callback,
+      }) as Promise<DepthEstimationPipeline>
+      pipelineCache.set(key, pending)
+    }
+    try {
+      return await pending
+    } catch (err) {
+      lastError = err
+      pipelineCache.delete(key) // don't cache a failed init
+    }
+  }
+  throw new Error(
+    `lightcast: failed to initialize depth model "${model}". ` +
+      `Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+  )
+}
+
+/** Normalize a raw depth tensor to 0..1 floats with near = 1. */
+function normalizeDepth(raw: Float32Array): Float32Array {
+  let min = Infinity
+  let max = -Infinity
+  for (let i = 0; i < raw.length; i++) {
+    const v = raw[i]!
+    if (v < min) min = v
+    if (v > max) max = v
+  }
+  const range = max - min || 1
+  const out = new Float32Array(raw.length)
+  // Depth Anything emits larger = closer, so a straight min-max keeps near ≈ 1.
+  for (let i = 0; i < raw.length; i++) out[i] = (raw[i]! - min) / range
+  return out
+}
+
+/** Bilinear resize of a single-channel float field to (dw, dh). */
+function resizeFloat(
+  src: Float32Array,
+  sw: number,
+  sh: number,
+  dw: number,
+  dh: number,
+): Float32Array {
+  if (sw === dw && sh === dh) return src
+  const out = new Float32Array(dw * dh)
+  const fx = sw / dw
+  const fy = sh / dh
+  for (let y = 0; y < dh; y++) {
+    const sy = Math.min(sh - 1, Math.max(0, (y + 0.5) * fy - 0.5))
+    const y0 = Math.floor(sy)
+    const y1 = Math.min(sh - 1, y0 + 1)
+    const wy = sy - y0
+    for (let x = 0; x < dw; x++) {
+      const sx = Math.min(sw - 1, Math.max(0, (x + 0.5) * fx - 0.5))
+      const x0 = Math.floor(sx)
+      const x1 = Math.min(sw - 1, x0 + 1)
+      const wx = sx - x0
+      const a = src[y0 * sw + x0]!
+      const b = src[y0 * sw + x1]!
+      const c = src[y1 * sw + x0]!
+      const d = src[y1 * sw + x1]!
+      const top = a + (b - a) * wx
+      const bot = c + (d - c) * wx
+      out[y * dw + x] = top + (bot - top) * wy
+    }
+  }
+  return out
+}
+
+/** Derive unit surface normals from a depth height-field. Output length n*3, -1..1. */
+function normalsFromDepth(
+  depth: Float32Array,
+  width: number,
+  height: number,
+  strength: number,
+): Float32Array {
+  const n = width * height
+  const out = new Float32Array(n * 3)
+  // Scale gradients into image space so bumpiness is resolution-independent.
+  const k = 0.02 * strength * Math.max(width, height)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x
+      const l = depth[x > 0 ? i - 1 : i]!
+      const r = depth[x < width - 1 ? i + 1 : i]!
+      const t = depth[y > 0 ? i - width : i]!
+      const b = depth[y < height - 1 ? i + width : i]!
+      const gx = (r - l) * 0.5 * k
+      const gy = (b - t) * 0.5 * k
+      // Height rises toward the camera (near = 1), so the normal tilts away from
+      // increasing depth. +y points up in view space (the renderer flips image y
+      // on upload, so we keep gy's sign to match screen-up here).
+      let nx = -gx
+      let ny = gy
+      let nz = 1
+      const len = Math.hypot(nx, ny, nz) || 1
+      nx /= len
+      ny /= len
+      nz /= len
+      out[i * 3] = nx
+      out[i * 3 + 1] = ny
+      out[i * 3 + 2] = nz
+    }
+  }
+  return out
+}
+
 /**
  * Estimate normals + depth from RGBA pixels.
  *
- * TODO(impl): create a cached `ort.InferenceSession` for `model` (WebGPU→WASM),
- * preprocess to the model's fixed input, run, then read the `normal` and `depth`
- * output tensors and resize to (width,height). Wiring is intentionally left to the
- * first implementation PR — see PLAN.md §4. The pack/unpack + control flow are real.
+ * Runs the depth model, normalizes to a 0..1 height-field, resizes back to the
+ * source resolution, lightly smooths it (to suppress 8-bit banding), and derives
+ * unit normals from the gradient. Returns float buffers plus the PNG-ready pack.
  */
 export async function estimateGBuffer(
-  _rgba: Uint8ClampedArray,
-  _width: number,
-  _height: number,
-  _options: GBufferOptions = {},
+  rgba: Uint8ClampedArray,
+  width: number,
+  height: number,
+  options: GBufferOptions = {},
 ): Promise<GBuffer> {
-  throw new Error(
-    'lightcast: estimateGBuffer is not wired yet. See PLAN.md §4 — load Metric3D v2 ONNX via ' +
-      'onnxruntime-web and fill normals+depth. Use packGBuffer()/unpackGBuffer() for the buffer.',
-  )
+  const { onInference, normalStrength = 1 } = options
+  const pipe = await getDepthPipeline(options)
+
+  const image = new RawImage(Uint8ClampedArray.from(rgba), width, height, 4)
+  onInference?.(10)
+  const out = await pipe(image)
+  onInference?.(85)
+
+  const result = Array.isArray(out) ? out[0]! : out
+  const predicted = result.predicted_depth
+  const dims = predicted.dims
+  const ph = dims[dims.length - 2] as number
+  const pw = dims[dims.length - 1] as number
+
+  const depthSmall = normalizeDepth(predicted.data as Float32Array)
+  const depthFull = resizeFloat(depthSmall, pw, ph, width, height)
+  // A light blur tames gradient noise before differentiation.
+  const depthSmooth = boxBlur(depthFull, width, height, 1)
+  const normals = normalsFromDepth(depthSmooth, width, height, normalStrength)
+  onInference?.(100)
+
+  const packed = packGBuffer(normals, depthFull, width, height)
+  return { packed, normals, depth: depthFull, width, height }
 }
