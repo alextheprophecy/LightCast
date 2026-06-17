@@ -1,0 +1,39 @@
+{
+  "name": "@lightcast/cli",
+  "version": "0.0.1",
+  "description": "Bake normal+depth G-buffers offline so production sites ship a tiny runtime instead of a model. `npx lightcast bake img.jpg`.",
+  "license": "MIT",
+  "author": "alextheprophecy",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alextheprophecy/lightcast.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/alextheprophecy/lightcast",
+  "type": "module",
+  "bin": {
+    "lightcast": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "echo \"no tests\" && exit 0"
+  },
+  "dependencies": {
+    "onnxruntime-web": "^1.20.0",
+    "lightcast": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

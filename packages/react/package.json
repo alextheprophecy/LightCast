@@ -1,0 +1,49 @@
+{
+  "name": "@lightcast/react",
+  "version": "0.0.1",
+  "description": "React wrapper for lightcast — drop-in interactive relighting.",
+  "license": "MIT",
+  "author": "alextheprophecy",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alextheprophecy/lightcast.git",
+    "directory": "packages/react"
+  },
+  "homepage": "https://github.com/alextheprophecy/lightcast",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "echo \"no tests\" && exit 0"
+  },
+  "peerDependencies": {
+    "lightcast": "workspace:*",
+    "react": ">=17",
+    "react-dom": ">=17"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "lightcast": "workspace:*",
+    "react": "^18.3.1",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

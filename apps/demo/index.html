@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>lightcast — relight any photo in the browser</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: system-ui, sans-serif;
+        background: #0b0b0e;
+        color: #eee;
+      }
+      header {
+        padding: 24px;
+      }
+      h1 {
+        margin: 0;
+        font-size: 20px;
+      }
+      p {
+        margin: 4px 0 0;
+        color: #9aa;
+        font-size: 13px;
+      }
+      #app {
+        display: grid;
+        place-items: center;
+        min-height: 70vh;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>lightcast</h1>
+      <p>Move your mouse to drag the light. Drop an image to relight it.</p>
+    </header>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
