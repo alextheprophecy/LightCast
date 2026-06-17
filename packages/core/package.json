@@ -1,0 +1,58 @@
+{
+  "name": "lightcast",
+  "version": "0.0.1",
+  "description": "Relight any photo from a single image in the browser — automatic normals + depth, real-time WebGL shading, no server.",
+  "keywords": [
+    "relighting",
+    "relight",
+    "normals",
+    "surface-normals",
+    "depth",
+    "metric3d",
+    "webgl",
+    "webgpu",
+    "onnx",
+    "computer-vision",
+    "image"
+  ],
+  "license": "MIT",
+  "author": "alextheprophecy",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alextheprophecy/lightcast.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/alextheprophecy/lightcast",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^4.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "tsup": "^8.3.5",
+    "vitest": "^2.1.8"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

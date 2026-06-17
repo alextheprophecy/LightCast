@@ -1,0 +1,39 @@
+name: Deploy demo
+
+# Builds apps/demo and publishes it to the `gh-pages` branch.
+# One-time setup: repo Settings → Pages → Source = "Deploy from a branch" → gh-pages / root.
+
+on:
+  push:
+    branches: [main, 'claude/**']
+    paths:
+      - 'apps/demo/**'
+      - 'packages/**'
+      - '.github/workflows/deploy-demo.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deploy-demo
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm --filter @lightcast/demo build
+      - uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./apps/demo/dist
+          force_orphan: true
